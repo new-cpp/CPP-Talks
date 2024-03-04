@@ -1,0 +1,463 @@
+#+TITLE: C++ common knowldge by Dawid Zalewski
+** talk major points:
+ 1. Uninitialized means indeterminate.
+ 2. Declaration order is initialization.
+ 3. Assignment is not initialialization.
+ 4. Implicit conversions are almost always evil.
+ 5. Everything need to be defined once.
+ 6. Only fully constructed objects benefit from RAII.
+ 7. RAII means: one class, one resource.
+ 8. Member functions have an extra this paramerter.
+ 9. Const member functions have const this paramerter.
+ 10. Hidden friends are there to help you.
+ 11. Polymorphic classes need virtual destructors.
+ 12. Be careful when passing derived classes by copy.
+
+** major points with example code:
+1. Uninitialized means indeterminate.
+
+  Bad one:
+    #+begin_src cpp
+       struct named_collection_base
+       {
+         std::string name; // random initial value garbage!!
+         std::size_t size; // same !!
+         named_collection_base(){} // useless user provided ctor !!
+       }
+       name_collection_base ncb{};
+
+       std::cout<<ncb.name; //OK ,the compiler will code a default ctor for         std::string
+
+       std::cout<<ncb.size; // UB
+    #+end_src
+
+   Good one:
+   - get ride of the useless Ctor.
+   - the braces initialization of ncb obj is great!!!
+   - put the braces somewhere e.g. in class
+
+   #+begin_src cpp
+    struct named_collection_base
+       {
+         std::string name{};
+         std::size_t size{};
+        named_collection_base(){} // useless user provided ctor !!
+       }
+       name_collection_base ncb;
+
+       std::cout<<ncb.name; //OK ,the compiler will code a default ctor for         std::string
+
+       std::cout<<ncb.size; // UB
+
+   #+end_src
+2. Declaration order is initialization order
+   Bad one:
+
+   - in the bad example capacity in data_min, and data_max allocation,
+     has indeterminate value. cuz declaration order is initiazation order.
+
+   #+begin_src cpp
+    template < typename t>
+    struct named_heap : named_collection_base
+    {
+      name_heap():
+        capacity { 16zu },
+        data_min { new T[capacity] },
+        data_max { new T[capacity] }
+        {  }
+
+      T* data_min;
+      T* data_max;
+      std::size_t capacity;
+    }
+   #+end_src
+
+   Good one:
+
+   #+begin_src cpp
+    template < typename t>
+    struct named_heap : named_collection_base
+    {
+      name_heap():
+
+        data_min { new T[capacity] },
+        data_max { new T[capacity] }
+        {  }
+
+      std::size_t capacity { 16 zu };
+      T* data_min {};
+      T* data_max {};
+
+    }
+   #+end_src
+3. Assignment is not initialization
+
+   Bad One :
+   - the compiler initialze the underlyine named_collection_base obj
+     + you overwriting the name paramerter in the body of the ctor
+       a bit wastefull.
+   #+begin_src cpp
+template < typename t>
+    struct named_heap : named_collection_base
+    {
+      name_heap(std::strin name):
+        // named_collection_base{} called by the compiler
+        data_min { new T[capacity] },
+        data_max { new T[capacity] }
+        {
+          named_collection_base::name = std::move(name);// not place to initialization
+        }
+
+      T* data_min{};
+      T* data_max{};
+      std::size_t  capacity { 16zu };
+    }
+   #
+
+   #+end_src
+
+   Good one:
+   #+begin_src cpp
+template < typename t>
+    struct named_heap : named_collection_base
+    {
+      name_heap(std::strin name):
+        named_collection_base{std::move(name)},
+        data_min { new T[capacity] },
+        data_max { new T[capacity] }
+        {
+
+        }
+      std::size_t  capacity { 16zu };
+      T* data_min{};
+      T* data_max{};
+
+    }
+
+
+   #+end_src
+
+4. Implicit conversions are almost always evil
+
+   1- Bad one:
+    - Class_Name(T)(name_heap(std::string name)): are call converting ctor.
+    - passing a string to a function with name_heap<T> type ... compiler allow it
+     CUZ of the implicit conversions.
+
+   #+begin_src cpp
+template < typename t>
+    struct named_heap : named_collection_base
+    {
+      name_heap(std::string name):
+        named_collection_base{.name = std::move(name)},
+        data_min { new T[capacity] },
+        data_max { new T[capacity] }
+        {
+
+        }
+      /* --- */
+    }
+named_heap<double> heap = "string literal"s; //weird
+   #+end_src
+
+  Good one:
+  mark the ctor explicit
+   #+begin_src cpp
+    template < typename t>
+    struct named_heap : named_collection_base
+    {
+      explicit name_heap(std::string name):
+        named_collection_base{.name = std::move(name)},
+        data_min { new T[capacity] },
+        data_max { new T[capacity] }
+        {
+
+        }
+      /* --- */
+    }
+
+   #+end_src
+
+  2- Bad one:
+  - implicit converting operators: class C { operator type()const{/*---*/} }
+  - line 190 @:  comparing 2 ptr to named_collection_base??? we don't have a compare operator, but name_collection_base has a covertion operator to named_object that can be compared.
+
+    #+begin_src cpp
+
+   std::unique_ptr<name_collection_base> heap{new named_heap<double>{"heap"}};
+   auto copy = std::make_unique<named_collection_base>(*heap);
+
+   if(*copy == *heap)/*@*/
+     {
+       need_a_collection(std::move(copy));
+     }
+
+    //
+   template< typename T>
+   struct named_heap:named_collection_base;
+
+   struct named_collection_base
+   {
+     std::string name;
+     std::size_t size;
+     named_collection_base(){};
+     operator named_object()const {return { name };}
+   };
+
+    bool operator ==(const named_object& a , const named_object& b);
+    #+end_src
+
+ -Good one:
+ - just mark the operator explicit.
+   #+begin_src cpp
+    struct named_collection_base
+    {
+      /* --- */
+      explicit operator named_object()const { return named; }
+    };
+   #+end_src
+5. Everything needs to be defined one (ODR)
+
+  1- bad_one case definition of a const (or a function) in the header file -> linker multiple definition pb.
+
+  #+begin_src cpp
+     // header file: named_heap.h
+    #ifndef NAMED_HEAP_H
+    #define NAMED_HEAP_H
+    auto  Kcap = 16zu;
+    #endif
+  #+end_src
+  pb: in two diff .cpp file it's will be compile at diffrent translation unit=> multiple diff pb.
+
+  2- good_one:
+  and for function make them inline functions.
+   #+begin_src cpp
+     constexpr static auto Kcap = 16zu;//put it inside the class
+     or iniline auto kCap = 16zu; // better not
+    #+end_src
+6. Only fuly constructed objects benefit from RAII
+   1. bad_one:
+   #+begin_src cpp
+
+    template < typename T>
+    struct named_heap
+    {
+      explicit named_heap(std::string):
+        data_min{ new T[kCap] },
+        data_max{ new T[kCap] }
+        {
+
+        }
+
+      ~named_heap() noexcept
+      {
+        delete[] data_min;
+        delete[] date_max;
+      }
+
+      T* data_min;
+      T* data_max;
+    }
+   #+end_src
+   pb:A destructor is guaranteed to be called for every fully constructed object.
+    meaning in case of data_min get allocated correctly while data_max not..(std::alloc_error) -> dtor will never be called .
+
+ 2. good_one:
+  sol: create a default ctor , and delgate the create of a fully constructed object to it for parametered ctor ( or conversion ctor in case of one paramerter ).
+ !!! don't do it..
+
+  just make the class for one resource , than if the resource is allocated the dtor is called .. otherwise we don't even need to call the dtor in the first place.
+  #+begin_src cpp
+   template<typename T>
+   struct named_heap
+   {
+     explicit named_heap(std::string) :
+       {
+         data_min = new T[kCap] {};
+       }
+
+     ~named_heap()noexcept { /*---*/ }
+
+     T* data_min{};
+   }
+
+  #+end_src
+7. RAII means: one class, one ressource
+
+  we abstract the class contain min_data alone into a dynamic_memory class
+  #+begin_src cpp
+    template<typename T>
+    struct dynamic_memory
+    {
+      dynamic_memory(std::size_t size):
+      size{size},
+      data{new T[sz]{}}
+      {
+
+      }
+
+      ~dynamic_memory()
+      {
+        delete[] data;
+      }
+
+      size_t size{};
+      T* data{};
+    }
+
+    // and in named_heap class we just add it
+      template <typename T>
+      struct named_heap : named_colloection_base
+      {
+        /*---*/
+
+        std::size_t capacity{ kCap };
+        dynamic_memory<T> data_min;
+        dynamic_memory<T> data_max;
+      }
+
+    ops : this is smart pointer !!!!!!!!!!!!
+    std::unique_ptr<T[]> data_min;
+  #+end_src
+8. member functions have an extra this parameter.
+
+  pb: consider next code:
+  #+begin_src cpp
+   struct named_object
+   {
+     std::string name{};
+     bool operator!=(const name_object& b) // member function
+       {
+         return name!= b.name;
+       }
+   }
+
+     /* compiler view:
+        bool named_object::operator!=( name_object* this, cosnt name_object&b)
+        {
+          return this->name != b.named;
+        }
+       ,*/
+
+     // free function
+     inline bool operator == (const named_object& a, const named_object& b)
+     {
+       return !(a != b);
+     }
+
+  #+end_src
+
+ !!!!!! this result in either compiler error or infinite recursion:
+  a!=b => a.operator!=(b);
+       => named_object::operator(&a,b);
+  pb: &a is  named_object*
+      b  is const named_object &
+
+ there is no overload for operator with such argument type.->
+  either: - compelation error.
+          - c++20 above there is a rewriting rule -> (==) become ! ( !=)
+             negating the other operator .. which result in an infinite recursion
+            of calling the operator ==
+  solution : is the next item
+9. const member functions have const this paramerter
+
+   just add const !!!
+  #+begin_src cpp
+  struct named_objet
+  {
+    std::string name{};
+    bool operator !=(const named_object& other) const
+      {
+        return name != other.named;
+      }
+    /* compiler view
+       bool operator !=(const named_object* this,const named_object& other)
+      {
+        return this->name != other.named;
+      }
+
+       ,*/
+  }
+  #+end_src
+10. hidden friends are there to help you
+   if you don't want you function to automaticly be found by the lookup
+   to see if it's much your call ( specially for implicit conversion  )
+   just make it's a hidden friend function :
+      friend function that defined inside the class so inlined ,
+      it's have a magical proprety , this function won't be found if one of the argument don't explicitly match the parameter of the function
+
+   #+begin_src cpp
+    struct named_object
+    {
+      std::string name{};
+      friend bool operator ==(const named_object& a, const named_object& b)
+        {
+          return a.name == b.name;
+        }
+      or better
+
+      friend auto operator <=>(const named_object& a , const named_object& b) = default;// way better
+    }
+   #+end_src
+11. polymorphic base classes need virtual destructors
+
+    #+begin_src cpp
+     struct named_collection_base
+     {
+       std::string  name{};
+       std::size_t size{};
+     }
+
+     struct named_heap: named_collection_base
+     {
+       explicit nameed_heap(std::string name);
+
+       std::unique_ptr<T[]> data_min;
+       std::unique_ptr<T[]> data_max;
+     }
+           //std::unique_ptr<named_collection_base> ptr(new named_heap<double>("heap"));
+    // named_collection_base* ptr = new named_heap<double>("heap");
+
+    #+end_src
+   delete ptr is call the dtor of named _collection_base is invoked not named_heap
+
+  fix:
+  just put default virtual dtor in base clase;
+  #+begin_src cpp
+  struct named_collection_base
+  {
+    std::string name{};
+    std::size_t size {};
+
+    virtual ~named_collection_base() noexcept = default;
+  }
+  #+end_src
+12. be careful when passing derived classes by copy (beware of slicing)
+
+1. bad one
+   #+begin_src cpp
+     void need_a_collection(named_collection_base copy);
+     auto heap = std::make_unique<named_heap<double>>("heap");
+     auto copy = std::make_unique<named_collection_base>(*heap);
+     need_a_collection(std::move(copy));
+   #+end_src
+2. bad one
+    #+begin_src cpp
+
+     void need_a_collection(named_collection_base copy);
+     named_heap<double> heap("heap");
+     need_a_collection(heap);
+    #+end_src
+
+ 1. sol: just pick up the right type with : decltype(obj)::element_type
+  #+begin_src cpp
+     void need_a_collection(named_collection_base copy);
+     auto heap = std::make_unique<named_heap<double>>("heap");
+     auto copy = std::make_unique<decltype(heap)::element_type>(*heap);
+     need_a_collection(std::move(copy));
+ #+end_src
+
+ 2. pass by const & instead of copy
+    #+begin_src cpp
+      void need_a_collection(const named_collection_base& copy);
+    #+end_src
