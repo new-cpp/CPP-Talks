@@ -1,0 +1,336 @@
+
+#+title: Typical C But Why Björn Fahller Meeting C 2023
+
+using type system to solve some typical problems
+** Wrong argment :
+
+pb:
+ #+begin_src cpp
+  std::string read_user_input();
+  std::string sanitize_input(const std::string& );
+  std::string query_user_data(const std::string&);
+
+  void process_result(const std::string& );
+  class illegal_query{ /*---*/ };
+
+void react_to_user_input()
+  {
+    auto input = read_user_input();
+    auto sanitize_input = sanitize_input(input);
+    log("input user data = ", sanitize_input);
+    auto result  = query_suze_data(input); /* input should be sanitized*/
+    process_result(result);
+  }
+
+ #+end_src
+
+ sol: create a sanitized string type to make the compiler warn about wrong argument
+     and for you explicitly pass a correct string.
+ #+begin_src cpp
+ std::string read_user_input();
+ sanitized_string sanitize_input(const std::string&);
+ std::string query_user_data(sanitized_string);
+
+ void process_result(const string& );
+ class illegal_query{};
+
+void react_to_user_input()
+  {
+    auto input = read_user_input();
+    auto sanitize_input = sanitize_input(input);
+    log("input use data = ",sanitize_input);
+    auto result = query_user_data(input);/*ding dong compiler error*/
+    process_result(result);
+  }
+
+class sanitize_string
+{
+  explicit sanitize_string(const std::string& );
+  explict operator const std::string&() const; /*conversion operator*/
+  std::string value;
+}
+
+ #+end_src
+
+*** conclusion:
+ - even a very simple struct elimnate a whole class of runtime erros.
+ - private data and throwing ctor make the right thing easy and the wrong thing
+   hard.
+ - almost always use explicit for ctor and conversion operatos.
+
+
+
+** A load of bool
+ - prob:
+   #+begin_src cpp
+
+   void print(std::string_vieiw , bool truncate ,bool pad , bool line_feed);
+   int main()
+     {
+       print("foo", false ,false, true);/*incomprencible*/
+     }
+   #+end_src
+
+ - sol: enum class
+   #+begin_src cpp
+    enum class truncate{ on,off };
+    enum class pad     { on, off };
+    enum class line_feed {on , off};
+   void print(std::string_view, truncate truncate_, pad pad_,line_feed line_feed_);
+   int main()
+     {
+       printf("foo", truncate::off,pad::off,line_feed::on); /* very readable
+                                                               and each unique type,
+                                                               reaordering is a compilation error*/
+     }
+   #+end_src
+
+*** conclusion:
+ - you almost never want bool parametre especially not several.
+ - enum class adds the good kind of verbosity that enhances readability.
+** Dangerous default
+
+pb: we want to add a size field parameter.
+#+begin_src cpp
+ void print(std::string_veiw ,size_t field, bool trunc ,bool pad,bool line_feed=true);
+
+int main()
+  {
+    print("foo", false,false,true);/*before add a field size*/
+    print("foo", false,false,true);/*after adding a field size still compile
+                                    ,because default paramerter and implcit converions*/
+  }
+#+end_src
+
+ sol: enum class to the rescue
+#+begin_src cpp
+  enum class truncate{ on,off };
+  enum class pad     { on, off };
+  enum class line_feed {on , off};
+   void print(std::string_view,
+              size_t field, truncate truncate_, pad pad_,
+              line_feed line_feed_ = line_feed::on);
+   int main()
+     {
+       printf("foo", truncate::off,pad::off,line_feed::on);/*beautiful compiler error*/
+     }
+ #+end_src
+
+*** conclusion:
+ -Default parameters are extremly dangerous over time if the
+ paramerter type are interchangeable.
+ - unique and non-convertible type catch this problem.
+
+
+** Coupled parameters
+- pb : two parameter describe one thing contiguous block of memory
+  #+begin_src cpp
+  size_t parse_header(const uint8_t* buffer ,size_t buffer_length);
+  void copy_payload( const uint8_t* begin, size_t payload_length );
+
+ void received_packet(const uint8_t* buffer, size_t buffer_size)
+   {
+     auto header_len = parse_header(buffer, buffer_size);
+     copy_payload(buffer + header_len, buffer_size);/* ops wrong ,we need to pass
+                                                       buffer_size - header_lengt
+                                                       so we don't buffer overflow*/
+   }
+  #+end_src
+
+- sol:
+
+  #+begin_src cpp
+
+    struct buffer_view
+    {
+      const uint8_t* const begin;
+      const size_t length;
+
+      buffer_view prefix(size_t len)const
+        {
+          return {begin, std::min(len,length)};
+        }
+      buffer_veiw suffix_after( size_t pos )const
+        {
+          auto adjusted_length = std::min(pos,length);
+          return { begin + adjusted_lenth , length - adjusted_length };
+        }
+    }
+void received_packet(buffer_view packet)
+{
+  auto header = parse_header(packet);
+  copy_payload(packet.suffix_after(header.length));
+}
+  #+end_src
+
+  - again another problem immutable members can be problemtic
+    (if we want to delete an element or ..)
+    #+begin_src cpp
+
+class buffer_view
+{
+  const uint8_t* start;
+  size_t length;
+
+  public
+   buffer_view(const uint8_t* buff, size_t len)
+    start(buff), length(len) {}
+
+  const uint8_t* cbegin() const { return buff; }
+  const uint8_t* cend()   const { return buff + length; }
+  size_t size() const {return length;}
+
+  buffer_view prefix(size_t len) const;
+  buffer_view suffix_after(size_t pos)const;
+
+}
+
+    #+end_src
+
+*** conclusion:
+ -when several parameters together describe one thing,
+ model that one thing as a type.
+
+
+** Too many defaults
+pb: what if want all default , and nonblocking is false?
+#+begin_src cpp
+
+ class server_socket
+ {
+   public :
+   server_socket(uint16_t port,
+                 bool tcp = true,
+                 std::string_view address="0.0.0.0",
+                 std::optional<std::string_veiw> mulicast = nullopt,
+                 bool nonblocking = true);
+ }
+#+end_src
+
+ sol:
+ #+begin_src cpp
+ class server_socket
+ {
+   public:
+    struct config /* member initailized to default*/
+    {
+        uint16_t port;
+        bool tcp = true;
+        std::string_view address = "0.0.0.0";
+        std::optional<std::string_veiw> multicast = nullopt;
+        bool nonblocking = true;
+    };
+
+    server_socket(config);
+ };
+
+int main()
+  {
+    // c++20 designated initialized list
+    server_socket socket ( { .port = 1666,
+                             .address = "127.0.0.1",
+                             .nonblocking = false});
+  }
+
+ #+end_src
+
+ - another pb : omitting port is not an error.
+   enter must_init :
+   #+begin_src cpp
+
+   template<typename T>
+   class must_init
+   {
+     /*no default ctor by the compiler cuz we provided a parametered one*/
+     must_init(T t) : value(std::move(t)) {}
+      operator const T&()const {return value;}
+      operator T&(){ return value; };
+
+     private:
+     T value;
+   };
+
+   /* in server_sockt*/
+   class server_socket
+   {
+     public:
+      struct config
+      {
+        must_init<uint16_t> port;
+        bool tcp = true;
+        /*-----*/
+      }
+   }
+   #+end_src
+
+*** conclusion:
+ - creating struct with parameters is helpful when many of them have
+   a default value.
+ - the technique is extra useful since c++ 20 thanks to the designated
+   initializer syntax.
+
+** Wrong key
+
+ - pb:
+   #+begin_src cpp
+    using client_id = int;
+    using server_id = int;
+
+   class control
+   {
+     std::map<client_id, session> m_client_session;
+     std::map<server_id, session> m_server_session;
+
+     public:
+     void close_server(server_id id)
+       {
+         m_client_session.erase(id);/* ops*/
+       }
+     void close_client(client_id id);
+   }
+   #+end_src
+
+ - sol:
+   empty enum class ???
+   #+begin_src cpp
+    enum class client_id : int{};
+    auto x = client_id(3);
+    auto y = x; /* assingable , copybale*/
+    int v = static_cast<int>(x);/*get underlyine value*/
+    bool b = x < y; /* comparable*/
+   #+end_src
+
+   #+begin_src cpp
+    enum class client_id : int {};
+    enum class server_id : int {};
+
+   class control
+   {
+     std::map<client_id, session> m_client_session;
+     std::map<server_id, session> m_server_session;
+
+     public:
+     void close_server(server_id id)
+       {
+         m_client_session.erase(id);/* boom compilation error*/
+       }
+     void close_client(client_id id);
+   }
+
+   #+end_src
+
+   case of server_id not integral type.
+   #+begin_src cpp
+    class server_id
+    {
+      std::string value;
+      public:
+      explicit server_id(std::string id) : value(std::move(id)) {}
+      explicit operator std::string_view() const { return value; }
+      auto operator <=> (const server_id&)const  = default;
+    };
+   #+end_src
+*** conclusion:
+ - enum class is great for creating new integer types
+ - c++20 operator <=>() save a lot of work
+ - avoid of use of type aliases in function signatures.
