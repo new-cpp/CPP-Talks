@@ -1,0 +1,8 @@
+#+title: Jon Kalb Exception Safe Code Part I
+
+** The problem :
+- separation of the error detection from error handling:
+     - error detection happen on low level , while handling should be in application logic.
+** solution without exceptions:
+- Error flags : errno , "GetError function".
+- Return codes.
